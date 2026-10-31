@@ -46,6 +46,29 @@ docker run --rm -p 8080:8080 \
 Then open [http://127.0.0.1:8080](http://127.0.0.1:8080).  
 Cluster hosts, TLS, and Flux image automation live in the tenant repo; this repo owns the image.
 
+### Git remotes
+
+Origin is the source of truth.  
+GitHub is a build mirror that runs Actions and publishes GHCR images.
+
+| Remote | URL | Role |
+| --- | --- | --- |
+| `origin` | `https://origin.cursor.com/git/mohsen-esmaeili/bakery-sim.git` | Day-to-day work |
+| `github` | `https://github.com/m-esm/bakery-sim.git` | CI / GHCR mirror |
+
+After each change on `main`, push to both remotes so the image workflow runs:
+
+```bash
+git push origin main
+git push github main
+```
+
+Add the GitHub remote once if it is missing:
+
+```bash
+git remote add github https://github.com/m-esm/bakery-sim.git
+```
+
 ## Controls
 
 | Input | Action |
