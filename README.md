@@ -15,6 +15,37 @@ Other commands:
 - Run tests: `npm test`
 - Build for production: `npm run build`
 
+## Deploy
+
+Live site: [https://bakery.moshes.io](https://bakery.moshes.io).  
+The Vite base path is `/` so the app serves from the site root.
+
+Every push to `main` builds a container image.  
+The `image` workflow runs `Dockerfile` for `linux/amd64` and pushes to `ghcr.io/m-esm/bakery-sim` with two tags: the full commit sha and `main-<run_number>-<sha7>`.
+
+The image is multi-stage:
+
+1. Node 22 builds the static site with `npm ci` and `npm run build`.
+2. `nginxinc/nginx-unprivileged:1.27-alpine` serves `dist/` on port **8080** as uid **101**.
+
+`deploy/nginx.conf` adds SPA fallback, gzip, and long cache headers for `/assets/` and `/models/` (including GLB files).  
+For a read-only root filesystem, mount emptyDirs at `/tmp`, `/var/cache/nginx`, and `/var/run`.
+
+Build and run locally:
+
+```bash
+docker build -t bakery-sim:local .
+docker run --rm -p 8080:8080 \
+  --read-only \
+  --tmpfs /tmp \
+  --tmpfs /var/cache/nginx \
+  --tmpfs /var/run \
+  bakery-sim:local
+```
+
+Then open [http://127.0.0.1:8080](http://127.0.0.1:8080).  
+Cluster hosts, TLS, and Flux image automation live in the tenant repo; this repo owns the image.
+
 ## Controls
 
 | Input | Action |

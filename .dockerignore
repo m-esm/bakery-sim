@@ -1,0 +1,17 @@
+.git
+.github
+.cursor
+node_modules
+dist
+dist-ssr
+coverage
+*.md
+.env
+.env.*
+*.log
+.DS_Store
+.vscode
+.idea
+Dockerfile
+.dockerignore
+capture-bakery.mjs
