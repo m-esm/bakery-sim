@@ -1,94 +1,144 @@
 import * as THREE from 'three'
-import { STAFF } from '../config/staff'
-import { toon } from './materials'
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { CustomerState, StaffState } from '../sim/types'
+import { MODEL_URLS, centerOnFloor, cloneModel, fitHeight, loadGltf } from './assets'
+
+interface Actor {
+  root: THREE.Group
+  mixer: THREE.AnimationMixer
+  idle: THREE.AnimationAction | null
+  walk: THREE.AnimationAction | null
+  mode: 'idle' | 'walk' | 'hidden'
+}
+
+const CUSTOMER_MODELS = [
+  MODEL_URLS.customerF1,
+  MODEL_URLS.customerF2,
+  MODEL_URLS.customerM1,
+  MODEL_URLS.customerM2,
+  MODEL_URLS.customerM3,
+] as const
 
 export class CharacterLayer {
   readonly group = new THREE.Group()
-  private staffMeshes = new Map<string, THREE.Group>()
-  private customerMeshes = new Map<string, THREE.Group>()
-  private bobPhase = 0
+  private staff = new Map<string, Actor>()
+  private customers = new Map<string, Actor>()
+  private templates = new Map<string, GLTF>()
+  private ready = false
 
   constructor() {
     this.group.name = 'characters'
-    for (const def of STAFF) {
-      const mesh = makePerson(def.color, def.role === 'baker' ? 0xfff1d6 : 0xffffff)
-      mesh.visible = false
-      this.staffMeshes.set(def.id, mesh)
-      this.group.add(mesh)
+  }
+
+  async load(): Promise<void> {
+    const urls = [
+      MODEL_URLS.maya,
+      MODEL_URLS.leo,
+      ...CUSTOMER_MODELS,
+    ]
+    await Promise.all(
+      urls.map(async (url) => {
+        this.templates.set(url, await loadGltf(url))
+      }),
+    )
+
+    this.staff.set('maya', this.makeActor(MODEL_URLS.maya, 1.15))
+    this.staff.set('leo', this.makeActor(MODEL_URLS.leo, 1.2))
+    for (const actor of this.staff.values()) {
+      actor.root.visible = false
+      this.group.add(actor.root)
     }
+    this.ready = true
   }
 
   update(staff: StaffState[], customers: CustomerState[], dtSec: number): void {
-    this.bobPhase += dtSec * 6
+    if (!this.ready) return
+
     for (const s of staff) {
-      const mesh = this.staffMeshes.get(s.id)
-      if (!mesh) continue
-      mesh.visible = s.onShift
-      if (!s.onShift) continue
+      const actor = this.staff.get(s.id)
+      if (!actor) continue
+      if (!s.onShift) {
+        actor.root.visible = false
+        actor.mode = 'hidden'
+        continue
+      }
+      actor.root.visible = true
+      actor.root.position.x = s.x
+      actor.root.position.z = s.z
       const moving = s.path.length > 0
-      mesh.position.set(s.x, moving ? 0.02 * Math.sin(this.bobPhase + s.x) : 0, s.z)
       if (moving) {
         const t = s.path[0]
-        mesh.rotation.y = Math.atan2(t.x - s.x, t.z - s.z)
+        actor.root.rotation.y = Math.atan2(t.x - s.x, t.z - s.z)
       }
+      this.setAnim(actor, moving ? 'walk' : 'idle')
+      actor.mixer.update(dtSec)
     }
 
     const seen = new Set<string>()
     for (const c of customers) {
       seen.add(c.id)
-      let mesh = this.customerMeshes.get(c.id)
-      if (!mesh) {
-        const hue = (hash(c.id) % 360) / 360
-        const color = new THREE.Color().setHSL(hue, 0.55, 0.55).getHex()
-        mesh = makePerson(color, 0xffe5d9)
-        this.customerMeshes.set(c.id, mesh)
-        this.group.add(mesh)
+      let actor = this.customers.get(c.id)
+      if (!actor) {
+        const url = CUSTOMER_MODELS[hash(c.id) % CUSTOMER_MODELS.length]
+        actor = this.makeActor(url, 1.1)
+        this.customers.set(c.id, actor)
+        this.group.add(actor.root)
       }
-      mesh.visible = true
+      actor.root.visible = true
+      actor.root.position.x = c.x
+      actor.root.position.z = c.z
       const moving = c.path.length > 0
-      mesh.position.set(c.x, moving ? 0.02 * Math.sin(this.bobPhase + c.x * 2) : 0, c.z)
       if (moving) {
         const t = c.path[0]
-        mesh.rotation.y = Math.atan2(t.x - c.x, t.z - c.z)
+        actor.root.rotation.y = Math.atan2(t.x - c.x, t.z - c.z)
       }
+      this.setAnim(actor, moving ? 'walk' : 'idle')
+      actor.mixer.update(dtSec)
     }
-    for (const [id, mesh] of this.customerMeshes) {
-      if (!seen.has(id)) {
-        this.group.remove(mesh)
-        this.customerMeshes.delete(id)
-      }
+
+    for (const [id, actor] of this.customers) {
+      if (seen.has(id)) continue
+      this.group.remove(actor.root)
+      actor.mixer.stopAllAction()
+      this.customers.delete(id)
+    }
+  }
+
+  private makeActor(url: string, height: number): Actor {
+    const gltf = this.templates.get(url)!
+    const root = cloneModel(gltf)
+    centerOnFloor(root)
+    fitHeight(root, height)
+    const mixer = new THREE.AnimationMixer(root)
+    const clips = gltf.animations
+    const idleClip = findClip(clips, ['idle', 'Idle', 'static'])
+    const walkClip = findClip(clips, ['walk', 'Walk', 'run', 'sprint'])
+    const idle = idleClip ? mixer.clipAction(idleClip) : null
+    const walk = walkClip ? mixer.clipAction(walkClip) : null
+    idle?.play()
+    return { root, mixer, idle, walk, mode: 'idle' }
+  }
+
+  private setAnim(actor: Actor, mode: 'idle' | 'walk'): void {
+    if (actor.mode === mode) return
+    actor.mode = mode
+    const fade = 0.2
+    if (mode === 'walk') {
+      actor.walk?.reset().fadeIn(fade).play()
+      actor.idle?.fadeOut(fade)
+    } else {
+      actor.idle?.reset().fadeIn(fade).play()
+      actor.walk?.fadeOut(fade)
     }
   }
 }
 
-function makePerson(bodyColor: number, skinColor: number): THREE.Group {
-  const g = new THREE.Group()
-  // Chunky low-poly body so staff/customers read clearly in the tiny shop
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.32, 0.18), toon(0x1d3557))
-  legs.position.y = 0.16
-  legs.castShadow = true
-  g.add(legs)
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.4, 0.22), toon(bodyColor))
-  body.position.y = 0.52
-  body.castShadow = true
-  g.add(body)
-
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.24), toon(skinColor))
-  head.position.y = 0.84
-  head.castShadow = true
-  g.add(head)
-
-  const hat = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.28), toon(0xf8f9fa))
-  hat.position.y = 1.02
-  g.add(hat)
-
-  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.05, 0.36), toon(0xf8f9fa))
-  brim.position.y = 0.94
-  g.add(brim)
-
-  return g
+function findClip(clips: THREE.AnimationClip[], names: string[]): THREE.AnimationClip | null {
+  for (const name of names) {
+    const hit = clips.find((c) => c.name === name || c.name.toLowerCase() === name.toLowerCase())
+    if (hit) return hit
+  }
+  return clips[0] ?? null
 }
 
 function hash(s: string): number {

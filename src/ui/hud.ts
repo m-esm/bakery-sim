@@ -59,7 +59,10 @@ export class Hud {
         <div id="hud-orders" class="list"></div>
       </aside>
       <footer class="hud-log">
-        <h2>Activity</h2>
+        <div class="log-head">
+          <h2>Activity</h2>
+          <a class="credits" href="/ASSETS.md" target="_blank" rel="noreferrer">3D models: Kenney (CC0)</a>
+        </div>
         <ul id="hud-log"></ul>
       </footer>
     `

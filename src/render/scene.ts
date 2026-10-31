@@ -2,47 +2,53 @@ import * as THREE from 'three'
 import { SHOP_DEPTH, SHOP_WIDTH } from '../config/layout'
 import { buildShop } from './shop'
 import { CharacterLayer } from './characters'
-import { PALETTE } from './materials'
+import { DisplayGoods } from './displayGoods'
 import type { SimSnapshot } from '../sim/types'
 
 export class BakeryRenderer {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
   readonly camera: THREE.PerspectiveCamera
-  readonly characters: CharacterLayer
-  private shop: THREE.Group
+  readonly characters = new CharacterLayer()
+  readonly displayGoods = new DisplayGoods()
   private sun: THREE.DirectionalLight
+  private warmFill: THREE.PointLight
   private hemi: THREE.HemisphereLight
   private clock = new THREE.Clock()
   private ovenGlow: THREE.Object3D | null = null
+  private displayAnchor: THREE.Group | null = null
+  private lastDisplayKey = ''
+  private ready = false
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
       alpha: false,
+      powerPreference: 'high-performance',
     })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    this.renderer.toneMappingExposure = 1.12
 
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(PALETTE.skyBottom)
-    this.scene.fog = new THREE.Fog(PALETTE.skyBottom, 12, 28)
+    this.scene.background = new THREE.Color(0xffe8cc)
+    this.scene.fog = new THREE.Fog(0xffe8cc, 14, 30)
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 50)
-    // View from the street / entrance so the 4×3 m front counter is readable
-    this.camera.position.set(5.4, 4.8, -3.6)
-    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.55, SHOP_DEPTH / 2)
+    // Pull back to show the sidewalk queue in front of the door
+    this.camera.position.set(5.6, 5.1, -4.2)
+    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.45, SHOP_DEPTH / 2 - 0.4)
 
-    this.hemi = new THREE.HemisphereLight(PALETTE.skyTop, PALETTE.floorFront, 0.85)
+    // Warm cartoon lighting
+    this.hemi = new THREE.HemisphereLight(0xffe0b2, 0xc4a574, 0.7)
     this.scene.add(this.hemi)
 
-    this.sun = new THREE.DirectionalLight(0xfff0d6, 1.15)
-    this.sun.position.set(4, 8, -2)
+    this.sun = new THREE.DirectionalLight(0xfff0d6, 1.05)
+    this.sun.position.set(3.5, 7.5, -2.5)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(1024, 1024)
     this.sun.shadow.camera.near = 0.5
@@ -53,24 +59,24 @@ export class BakeryRenderer {
     this.sun.shadow.camera.bottom = -6
     this.scene.add(this.sun)
 
-    const fill = new THREE.DirectionalLight(0xa8dadc, 0.35)
-    fill.position.set(-3, 3, 4)
-    this.scene.add(fill)
+    this.warmFill = new THREE.PointLight(0xffb347, 0.55, 10, 2)
+    this.warmFill.position.set(2.0, 1.8, 1.2)
+    this.scene.add(this.warmFill)
 
-    this.shop = buildShop()
-    this.scene.add(this.shop)
-    this.ovenGlow = this.shop.getObjectByName('ovenGlow') ?? null
+    const coolRim = new THREE.DirectionalLight(0xa8dadc, 0.25)
+    coolRim.position.set(-3, 3, 4)
+    this.scene.add(coolRim)
 
-    this.characters = new CharacterLayer()
     this.scene.add(this.characters.group)
+  }
 
-    // Ground plane shadow receiver already in shop; add subtle grid helper offset
-    const edge = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(SHOP_WIDTH, 0.02, SHOP_DEPTH)),
-      new THREE.LineBasicMaterial({ color: 0x7f5539 }),
-    )
-    edge.position.set(SHOP_WIDTH / 2, 0.04, SHOP_DEPTH / 2)
-    this.scene.add(edge)
+  async init(): Promise<void> {
+    const shop = await buildShop()
+    this.scene.add(shop.root)
+    this.displayAnchor = shop.displayAnchor
+    this.ovenGlow = shop.ovenGlow
+    await Promise.all([this.characters.load(), this.displayGoods.load()])
+    this.ready = true
   }
 
   resize(width: number, height: number): void {
@@ -80,30 +86,38 @@ export class BakeryRenderer {
   }
 
   render(snap: SimSnapshot): void {
-    const dt = this.clock.getDelta()
-    this.characters.update(snap.staff, snap.customers, dt)
+    const dt = Math.min(0.05, this.clock.getDelta())
+    if (this.ready) {
+      this.characters.update(snap.staff, snap.customers, dt)
 
-    // Day/night tint from time of day
+      const key = snap.display.map((g) => `${g.productId}:${g.quantity}`).join('|')
+      if (key !== this.lastDisplayKey && this.displayAnchor) {
+        this.lastDisplayKey = key
+        this.displayGoods.sync(this.displayAnchor, snap.display)
+      }
+    }
+
     const hour = (snap.timeMin / 60) % 24
-    const dayFactor = hour < 6 || hour > 19 ? 0.35 : hour < 7 || hour > 18 ? 0.65 : 1
-    this.sun.intensity = 0.55 + 0.7 * dayFactor
-    this.hemi.intensity = 0.45 + 0.45 * dayFactor
-    const sky = new THREE.Color(PALETTE.skyBottom).lerp(new THREE.Color(PALETTE.skyTop), dayFactor * 0.5)
-    if (hour >= 18) sky.lerp(new THREE.Color(0xff922b), 0.25)
-    if (hour < 6) sky.set(0x1d3557)
+    const dayFactor = hour < 6 || hour > 19 ? 0.4 : hour < 7 || hour > 18 ? 0.7 : 1
+    this.sun.intensity = 0.55 + 0.6 * dayFactor
+    this.hemi.intensity = 0.45 + 0.35 * dayFactor
+    this.warmFill.intensity = 0.35 + 0.35 * dayFactor
+
+    const sky = new THREE.Color(0xffe8cc).lerp(new THREE.Color(0x89c2d9), dayFactor * 0.35)
+    if (hour >= 18) sky.lerp(new THREE.Color(0xff922b), 0.2)
+    if (hour < 6) sky.set(0x2b2d42)
     this.scene.background = sky
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky)
 
     if (this.ovenGlow && this.ovenGlow instanceof THREE.Mesh) {
       const mat = this.ovenGlow.material as THREE.MeshStandardMaterial
-      mat.emissiveIntensity = snap.equipment.ovenInUse ? 0.9 : 0.25
+      mat.emissiveIntensity = snap.equipment.ovenInUse ? 1.1 : 0.25
     }
 
-    // Gentle camera sway from the entrance side
     const t = performance.now() * 0.00015
-    this.camera.position.x = 5.4 + Math.sin(t) * 0.12
-    this.camera.position.z = -3.6 + Math.cos(t * 0.8) * 0.08
-    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.55, SHOP_DEPTH / 2)
+    this.camera.position.x = 5.6 + Math.sin(t) * 0.12
+    this.camera.position.z = -4.2 + Math.cos(t * 0.8) * 0.08
+    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.45, SHOP_DEPTH / 2 - 0.4)
 
     this.renderer.render(this.scene, this.camera)
   }

@@ -37,6 +37,20 @@ body,
   height: 100%;
 }
 
+#boot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+  background: linear-gradient(160deg, #2b2118, #1d3557);
+  color: #fff8eb;
+  font-family: 'Nunito', system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+}
+
 #hud {
   pointer-events: none;
   position: absolute;
@@ -210,6 +224,26 @@ body,
 
 .hud-log h2 {
   color: #cbd5e1;
+  margin: 0;
+}
+
+.log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.credits {
+  color: #ffd6a5;
+  font-size: 0.75rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.credits:hover {
+  text-decoration: underline;
 }
 
 .hud-log ul {

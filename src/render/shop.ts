@@ -1,58 +1,49 @@
 import * as THREE from 'three'
 import { FURNITURE, SHOP_DEPTH, SHOP_WIDTH, STATIONS } from '../config/layout'
-import { PALETTE, toon, toonEmissive } from './materials'
+import { PALETTE, toon } from './materials'
+import { MODEL_URLS, centerOnFloor, cloneModel, fitHeight, loadGltf } from './assets'
 
-export function buildShop(): THREE.Group {
+export interface ShopBuildResult {
+  root: THREE.Group
+  displayAnchor: THREE.Group
+  ovenGlow: THREE.Object3D | null
+}
+
+export async function buildShop(): Promise<ShopBuildResult> {
   const root = new THREE.Group()
   root.name = 'shop'
 
   // Outside ground
-  const outside = new THREE.Mesh(
-    new THREE.PlaneGeometry(10, 8),
-    toon(PALETTE.grass),
-  )
+  const outside = new THREE.Mesh(new THREE.PlaneGeometry(10, 8), toon(PALETTE.grass))
   outside.rotation.x = -Math.PI / 2
   outside.position.set(SHOP_WIDTH / 2, -0.01, SHOP_DEPTH / 2 - 1)
   outside.receiveShadow = true
   root.add(outside)
 
-  const sidewalk = new THREE.Mesh(
-    new THREE.BoxGeometry(2.2, 0.04, 2.2),
-    toon(PALETTE.sidewalk),
-  )
-  sidewalk.position.set(STATIONS.door.x, 0.02, -0.7)
+  const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.04, 2.4), toon(PALETTE.sidewalk))
+  sidewalk.position.set(STATIONS.door.x, 0.02, -0.75)
   sidewalk.receiveShadow = true
   root.add(sidewalk)
 
-  // Floor — two tones for front/back
-  const floorFront = new THREE.Mesh(
-    new THREE.BoxGeometry(SHOP_WIDTH, 0.06, 1.3),
-    toon(PALETTE.floorFront),
-  )
+  // Floors
+  const floorFront = new THREE.Mesh(new THREE.BoxGeometry(SHOP_WIDTH, 0.06, 1.3), toon(PALETTE.floorFront))
   floorFront.position.set(SHOP_WIDTH / 2, 0.03, 0.65)
   floorFront.receiveShadow = true
   root.add(floorFront)
 
-  const floorBack = new THREE.Mesh(
-    new THREE.BoxGeometry(SHOP_WIDTH, 0.06, 1.7),
-    toon(PALETTE.floorBack),
-  )
+  const floorBack = new THREE.Mesh(new THREE.BoxGeometry(SHOP_WIDTH, 0.06, 1.7), toon(PALETTE.floorBack))
   floorBack.position.set(SHOP_WIDTH / 2, 0.03, 2.15)
   floorBack.receiveShadow = true
   root.add(floorBack)
 
-  // Dollhouse cutaway walls — short so staff and stations stay visible
+  // Dollhouse walls
   const wallMat = toon(PALETTE.wall)
   const trimMat = toon(PALETTE.wallTrim)
   const wallH = 1.15
-
-  // Back wall (full width, short)
   addWall(root, SHOP_WIDTH, wallH, SHOP_WIDTH / 2, wallH / 2, SHOP_DEPTH, wallMat)
-  // Left / right
   addWall(root, 0.08, wallH, 0, wallH / 2, SHOP_DEPTH / 2, wallMat, SHOP_DEPTH)
   addWall(root, 0.08, wallH, SHOP_WIDTH, wallH / 2, SHOP_DEPTH / 2, wallMat, SHOP_DEPTH)
 
-  // Front wall with door gap
   const frontLeft = new THREE.Mesh(new THREE.BoxGeometry(1.4, wallH, 0.08), wallMat)
   frontLeft.position.set(0.7, wallH / 2, 0)
   frontLeft.castShadow = true
@@ -65,133 +56,136 @@ export function buildShop(): THREE.Group {
   lintel.position.set(2.0, wallH + 0.06, 0)
   root.add(lintel)
 
-  // Low divider between front and back
+  // Low divider
   const div = FURNITURE.backWallDivider
-  const divider = new THREE.Mesh(
-    new THREE.BoxGeometry(div.w, 0.9, div.d),
-    toon(PALETTE.wood),
-  )
-  divider.position.set(div.x + div.w / 2, 0.45, div.z + div.d / 2)
+  const divider = new THREE.Mesh(new THREE.BoxGeometry(div.w, 0.85, div.d), toon(PALETTE.wood))
+  divider.position.set(div.x + div.w / 2, 0.42, div.z + div.d / 2)
   divider.castShadow = true
   root.add(divider)
-  // Pass-through gap near center-right
-  const gap = new THREE.Mesh(
-    new THREE.BoxGeometry(0.7, 0.92, 0.1),
-    toon(PALETTE.floorBack),
-  )
-  gap.position.set(2.5, 0.45, div.z + 0.04)
-  root.add(gap)
 
-  // Furniture
-  addBox(root, FURNITURE.displayCase, toon(PALETTE.woodDark), 'displayCase')
-  // Glass top on display
-  const glass = new THREE.Mesh(
-    new THREE.BoxGeometry(FURNITURE.displayCase.w * 0.92, 0.35, FURNITURE.displayCase.d * 0.85),
-    new THREE.MeshStandardMaterial({
-      color: PALETTE.glass,
-      transparent: true,
-      opacity: 0.45,
-      roughness: 0.2,
-      flatShading: true,
-    }),
-  )
-  glass.position.set(
-    FURNITURE.displayCase.x + FURNITURE.displayCase.w / 2,
-    FURNITURE.displayCase.h + 0.1,
-    FURNITURE.displayCase.z + FURNITURE.displayCase.d / 2,
-  )
-  root.add(glass)
-
-  // Pastries in display (simple spheres/boxes)
-  for (let i = 0; i < 5; i++) {
-    const p = new THREE.Mesh(
-      new THREE.SphereGeometry(0.07, 6, 4),
-      toonEmissive(PALETTE.pastry, 0xffb703, 0.15),
-    )
-    p.position.set(
-      FURNITURE.displayCase.x + 0.25 + i * 0.3,
-      FURNITURE.displayCase.h + 0.05,
-      FURNITURE.displayCase.z + FURNITURE.displayCase.d / 2,
-    )
-    root.add(p)
-  }
-
-  addBox(root, FURNITURE.registerDesk, toon(PALETTE.wood), 'register')
-  const register = new THREE.Mesh(
-    new THREE.BoxGeometry(0.25, 0.2, 0.25),
-    toon(0x22223b),
-  )
-  register.position.set(
-    FURNITURE.registerDesk.x + FURNITURE.registerDesk.w / 2,
-    FURNITURE.registerDesk.h + 0.1,
-    FURNITURE.registerDesk.z + FURNITURE.registerDesk.d / 2,
-  )
-  root.add(register)
-
-  addBox(root, FURNITURE.prepTable, toon(PALETTE.wood), 'prep')
-  addBox(root, FURNITURE.oven, toon(PALETTE.oven), 'oven')
-  const ovenDoor = new THREE.Mesh(
-    new THREE.BoxGeometry(0.55, 0.45, 0.05),
-    toonEmissive(0x22223b, PALETTE.ovenHot, 0.4),
-  )
-  ovenDoor.position.set(
-    FURNITURE.oven.x + FURNITURE.oven.w / 2,
-    0.7,
-    FURNITURE.oven.z + 0.02,
-  )
-  ovenDoor.name = 'ovenGlow'
-  root.add(ovenDoor)
-
-  addBox(root, FURNITURE.sink, toon(PALETTE.metal), 'sink')
-  const basin = new THREE.Mesh(
-    new THREE.BoxGeometry(0.4, 0.12, 0.3),
-    toon(0x4cc9f0),
-  )
-  basin.position.set(
-    FURNITURE.sink.x + FURNITURE.sink.w / 2,
-    FURNITURE.sink.h,
-    FURNITURE.sink.z + FURNITURE.sink.d / 2,
-  )
-  root.add(basin)
-
-  addBox(root, FURNITURE.storageShelf, toon(PALETTE.woodDark), 'storage')
-  for (let y = 0; y < 3; y++) {
-    const sack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.35, 0.25, 0.3),
-      toon(0xf4e1c1),
-    )
-    sack.position.set(
-      FURNITURE.storageShelf.x + 0.35,
-      0.35 + y * 0.4,
-      FURNITURE.storageShelf.z + 0.28,
-    )
-    root.add(sack)
-  }
-
-  // Awning over the entrance (outside, street side)
-  const awning = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 0.05, 0.5),
-    toon(0xe63946),
-  )
+  // Awning + sign
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 0.5), toon(0xe63946))
   awning.position.set(2.0, 1.35, -0.32)
   awning.rotation.x = -0.15
   root.add(awning)
-  const poleL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.45, 0.04), toon(PALETTE.woodDark))
-  poleL.position.set(1.35, 1.1, -0.5)
-  root.add(poleL)
-  const poleR = poleL.clone()
-  poleR.position.x = 2.65
-  root.add(poleR)
-
-  // Sign on front wall
-  const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.28, 0.06),
-    toon(0x1d3557),
-  )
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.28, 0.06), toon(0x1d3557))
   sign.position.set(2.0, 1.55, 0.05)
   root.add(sign)
 
-  return root
+  // Load Kenney GLBs
+  const [
+    displayGltf,
+    registerGltf,
+    deskGltf,
+    tableGltf,
+    stoveGltf,
+    sinkGltf,
+    fridgeGltf,
+    blenderGltf,
+    bookcaseGltf,
+    shelfGltf,
+    barGltf,
+    cabinetGltf,
+  ] = await Promise.all([
+    loadGltf(MODEL_URLS.displayBread),
+    loadGltf(MODEL_URLS.cashRegister),
+    loadGltf(MODEL_URLS.desk),
+    loadGltf(MODEL_URLS.table),
+    loadGltf(MODEL_URLS.stove),
+    loadGltf(MODEL_URLS.sink),
+    loadGltf(MODEL_URLS.fridge),
+    loadGltf(MODEL_URLS.blender),
+    loadGltf(MODEL_URLS.bookcase),
+    loadGltf(MODEL_URLS.shelfBoxes),
+    loadGltf(MODEL_URLS.bar),
+    loadGltf(MODEL_URLS.cabinet),
+  ])
+
+  // Display case (front)
+  const display = placeModel(cloneModel(displayGltf), {
+    x: 1.2,
+    z: 0.95,
+    rotY: Math.PI,
+    height: 1.05,
+  })
+  display.name = 'displayCase'
+  root.add(display)
+
+  // Counter bar under / beside display
+  const bar = placeModel(cloneModel(barGltf), { x: 2.15, z: 0.95, rotY: Math.PI, height: 0.9 })
+  root.add(bar)
+
+  // Register desk + cash register
+  const desk = placeModel(cloneModel(deskGltf), { x: 3.15, z: 0.95, rotY: Math.PI, height: 0.85 })
+  root.add(desk)
+  const register = placeModel(cloneModel(registerGltf), {
+    x: 3.15,
+    z: 0.85,
+    rotY: Math.PI,
+    height: 0.35,
+    y: 0.85,
+  })
+  root.add(register)
+
+  // Prep table + mixer
+  const prep = placeModel(cloneModel(tableGltf), { x: 0.7, z: 2.0, rotY: 0, height: 0.85 })
+  root.add(prep)
+  const mixer = placeModel(cloneModel(blenderGltf), { x: 0.55, z: 1.85, height: 0.35, y: 0.85 })
+  root.add(mixer)
+
+  // Oven (stove)
+  const oven = placeModel(cloneModel(stoveGltf), { x: 2.0, z: 2.55, rotY: Math.PI, height: 1.15 })
+  oven.name = 'oven'
+  root.add(oven)
+
+  // Sink
+  const sink = placeModel(cloneModel(sinkGltf), { x: 3.35, z: 2.15, rotY: -Math.PI / 2, height: 0.95 })
+  root.add(sink)
+
+  // Storage / fridge / shelves
+  const fridge = placeModel(cloneModel(fridgeGltf), { x: 0.45, z: 2.65, rotY: Math.PI / 2, height: 1.35 })
+  root.add(fridge)
+  const shelves = placeModel(cloneModel(bookcaseGltf), { x: 0.2, z: 2.15, rotY: Math.PI / 2, height: 1.4 })
+  root.add(shelves)
+  const stockShelf = placeModel(cloneModel(shelfGltf), { x: 3.55, z: 1.55, rotY: -Math.PI / 2, height: 1.5 })
+  root.add(stockShelf)
+  const cabinet = placeModel(cloneModel(cabinetGltf), { x: 1.35, z: 2.7, rotY: Math.PI, height: 0.9 })
+  root.add(cabinet)
+
+  // Anchor for baked goods on the display
+  const displayAnchor = new THREE.Group()
+  displayAnchor.name = 'displayGoods'
+  displayAnchor.position.set(1.2, 1.05, 0.95)
+  root.add(displayAnchor)
+
+  // Soft oven glow marker (emissive plane on stove front)
+  const ovenGlow = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.35, 0.28),
+    new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      emissive: PALETTE.ovenHot,
+      emissiveIntensity: 0.3,
+      flatShading: true,
+    }),
+  )
+  ovenGlow.position.set(2.0, 0.55, 2.28)
+  ovenGlow.name = 'ovenGlow'
+  root.add(ovenGlow)
+
+  return { root, displayAnchor, ovenGlow }
+}
+
+function placeModel(
+  model: THREE.Group,
+  opts: { x: number; z: number; rotY?: number; height: number; y?: number },
+): THREE.Group {
+  centerOnFloor(model)
+  fitHeight(model, opts.height)
+  model.rotation.y = opts.rotY ?? 0
+  model.position.x = opts.x
+  model.position.z = opts.z
+  if (opts.y !== undefined) model.position.y = opts.y
+  return model
 }
 
 function addWall(
@@ -204,29 +198,12 @@ function addWall(
   mat: THREE.Material,
   depth = 0.08,
 ): void {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w === 0.08 ? depth : w, h, w === 0.08 ? depth : depth), mat)
-  // For side walls we pass depth as length along Z
-  if (w === 0.08) {
-    mesh.geometry.dispose()
-    mesh.geometry = new THREE.BoxGeometry(0.08, h, depth)
-  }
+  const mesh = new THREE.Mesh(
+    w === 0.08 ? new THREE.BoxGeometry(0.08, h, depth) : new THREE.BoxGeometry(w, h, depth),
+    mat,
+  )
   mesh.position.set(x, y, z)
   mesh.castShadow = true
   mesh.receiveShadow = true
   root.add(mesh)
-}
-
-function addBox(
-  root: THREE.Group,
-  f: { x: number; z: number; w: number; d: number; h: number },
-  mat: THREE.Material,
-  name: string,
-): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(f.w, f.h, f.d), mat)
-  mesh.position.set(f.x + f.w / 2, f.h / 2, f.z + f.d / 2)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  mesh.name = name
-  root.add(mesh)
-  return mesh
 }
