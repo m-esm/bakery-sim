@@ -3,7 +3,7 @@ import { BakerySim } from './sim/bakery'
 import { realDtToSimMin } from './sim/clock'
 import { BakeryRenderer } from './render/scene'
 import { Hud } from './ui/hud'
-import { STATIONS } from './config/layout'
+import { queueSlotPosition } from './config/layout'
 import type { ProductId } from './config/recipes'
 import type { TimeSpeed } from './sim/types'
 
@@ -55,15 +55,18 @@ renderer
       },
       snapshot: () => sim.snapshot(),
       /** Capture helper: put customers on the sidewalk queue. */
-      fillOutsideQueue: (n = 3) => {
+      fillOutsideQueue: (n = 4) => {
         const wants: ProductId[] = ['croissant', 'muffin', 'cookie', 'baguette']
+        // Drop existing outside waiters so the demo line is clean
+        sim.customers = sim.customers.filter((c) => c.state !== 'queuedOutside')
         for (let i = 0; i < n; i++) {
+          const slot = queueSlotPosition(i)
           sim.customers.push({
             id: `demo-q-${Date.now()}-${i}`,
-            x: STATIONS.queueOutside.x + (i % 2) * 0.05,
-            z: STATIONS.queueOutside.z - i * 0.45,
-            targetX: STATIONS.queueOutside.x,
-            targetZ: STATIONS.queueOutside.z - i * 0.45,
+            x: slot.x,
+            z: slot.z,
+            targetX: slot.x,
+            targetZ: slot.z,
             path: [],
             state: 'queuedOutside',
             want: wants[i % wants.length],
@@ -73,6 +76,7 @@ renderer
           })
         }
       },
+      characterHeights: () => renderer.characters.measureVisible(),
     }
   })
   .catch((err) => {

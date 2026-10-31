@@ -1,7 +1,7 @@
 import { INGREDIENTS, type IngredientId } from '../config/ingredients'
 import { RECIPES, type ProductId } from '../config/recipes'
 import { STAFF } from '../config/staff'
-import { STATIONS } from '../config/layout'
+import { STATIONS, queueSlotPosition } from '../config/layout'
 import {
   BASE_ARRIVAL_INTERVAL_MIN,
   DAILY_OVERHEAD,
@@ -79,7 +79,8 @@ export class BakerySim {
   speed: TimeSpeed = 1
   cash = STARTING_CASH
   stock: StockLot[] = createStartingStock(1)
-  display: FinishedGood[] = []
+  /** Overnight bake so the case is not empty at open. */
+  display: FinishedGood[] = seedOvernightDisplay()
   orders: SupplyOrder[] = []
   batches: BatchJob[] = []
   staff: StaffState[] = []
@@ -99,6 +100,7 @@ export class BakerySim {
   private arrivalCooldown = 2
   private morningOrdered = false
   private closingCleanupDone = false
+  private bakeCursor = 0
   private rng: () => number
 
   constructor(rng: () => number = Math.random) {
@@ -284,18 +286,30 @@ export class BakerySim {
 
   private planProduction(): void {
     if (phaseAt(this.timeMin) === 'closing' || phaseAt(this.timeMin) === 'closed') return
-    // Keep display stocked: queue batches for low products
-    const activeOrQueued = this.batches.filter((b) => b.status !== 'done')
-    if (activeOrQueued.length >= 3) return
+    const menu: ProductId[] = ['croissant', 'baguette', 'muffin', 'cookie']
+    // Prefer empty display shelves, then round-robin so every product gets time
+    const ranked = [...menu].sort((a, b) => {
+      const needA = displayOf(this.display, a)
+      const needB = displayOf(this.display, b)
+      if (needA !== needB) return needA - needB
+      const ai = (menu.indexOf(a) - this.bakeCursor + menu.length) % menu.length
+      const bi = (menu.indexOf(b) - this.bakeCursor + menu.length) % menu.length
+      return ai - bi
+    })
 
-    const priorities: ProductId[] = ['croissant', 'baguette', 'muffin', 'cookie']
-    for (const productId of priorities) {
+    // During prep, queue one batch per product. After open, keep up to 4 jobs.
+    const phase = phaseAt(this.timeMin)
+    const maxJobs = phase === 'prep' ? 4 : 4
+    let started = 0
+    for (const productId of ranked) {
+      const activeOrQueued = this.batches.filter((b) => b.status !== 'done')
+      if (activeOrQueued.length >= maxJobs) break
       if (activeOrQueued.some((b) => b.productId === productId)) continue
       const onDisplay = displayOf(this.display, productId)
       const recipe = RECIPES[productId]
-      const threshold = Math.ceil(recipe.batchSize * 0.5)
-      if (onDisplay >= threshold && this.timeMin >= 7 * 60) continue
-      // During prep, bake even if display empty
+      const target = Math.max(2, Math.ceil(recipe.batchSize * 0.5))
+      // During prep, bake the full menu even if overnight stock exists.
+      if (phase !== 'prep' && onDisplay >= target) continue
       if (!canConsume(this.stock, recipe.ingredients)) continue
       if (this.equipment.ovenWear >= 0.98 && recipe.stages.some((s) => s.stage === 'bake')) {
         continue
@@ -313,11 +327,15 @@ export class BakerySim {
         status: 'queued',
       }
       this.batches.push(job)
+      this.bakeCursor = (menu.indexOf(productId) + 1) % menu.length
       this.pushLog(`Started batch: ${recipe.name} ×${recipe.batchSize}.`)
       this.equipment.dirtyDishes += 1
       this.equipment.surfaceDirt = Math.min(1, this.equipment.surfaceDirt + recipe.dirtPerBatch * 0.3)
-      break
+      started += 1
+      // After open, start one job per tick so the baker is not flooded
+      if (phase !== 'prep') break
     }
+    void started
   }
 
   private sendStaff(staff: StaffState, stationId: keyof typeof STATIONS, task: StaffTask): void {
@@ -584,39 +602,47 @@ export class BakerySim {
       }
     }
 
-    // Compact outside queue positions
+    // Keep a single-file sidewalk queue with fixed spacing; step forward as slots free
     const queued = this.customers
       .filter((c) => c.state === 'queuedOutside')
       .sort((a, b) => a.queueIndex - b.queueIndex)
-    queued.forEach((c, i) => {
+    for (let i = 0; i < queued.length; i++) {
+      const c = queued[i]
       c.queueIndex = i
-      const q = STATIONS.queueOutside
-      const tx = q.x
-      const tz = q.z - i * 0.45
-      if (Math.hypot(c.x - tx, c.z - tz) > 0.1 && c.path.length === 0) {
-        c.targetX = tx
-        c.targetZ = tz
-        c.path = [{ x: tx, z: tz }]
+      const slot = queueSlotPosition(i)
+      c.targetX = slot.x
+      c.targetZ = slot.z
+      const dist = Math.hypot(c.x - slot.x, c.z - slot.z)
+      if (dist <= 0.04) {
+        c.x = slot.x
+        c.z = slot.z
+        c.path = []
+        continue
       }
-    })
+      // Walk toward the assigned slot in this same step so the line never piles up
+      const moved = advanceAlongPath(c.x, c.z, [{ x: slot.x, z: slot.z }], walkSpeed, dtMin)
+      c.x = moved.x
+      c.z = moved.z
+      c.path = moved.path
+    }
 
     this.customers = this.customers.filter((c) => c.state !== 'done')
   }
 
   private spawnCustomer(queueIndex: number): void {
     const want = pickWant(this.rng)
-    const q = STATIONS.queueOutside
+    const slot = queueSlotPosition(queueIndex)
     const c: CustomerState = {
       id: nextId('cust'),
-      x: q.x + (this.rng() - 0.5) * 0.2,
-      z: q.z - queueIndex * 0.45,
-      targetX: q.x,
-      targetZ: q.z - queueIndex * 0.45,
+      x: slot.x,
+      z: slot.z,
+      targetX: slot.x,
+      targetZ: slot.z,
       path: [],
       state: 'queuedOutside',
       want,
       queueIndex,
-      patienceMin: 12 + this.rng() * 10,
+      patienceMin: 14 + this.rng() * 10,
       payAmount: 0,
     }
     this.customers.push(c)
@@ -749,6 +775,7 @@ export class BakerySim {
     this.arrivalCooldown = 2
     this.customers = []
     this.batches = []
+    this.display = seedOvernightDisplay()
     this.orders = this.orders.filter((o) => o.status === 'pending')
     this.ledger = emptyLedger()
     for (const s of this.staff) {
@@ -774,4 +801,14 @@ export class BakerySim {
 
 function needsStaff(stage: BatchJob['stage']): boolean {
   return stage === 'mix' || stage === 'decorate' || stage === 'display' || stage === 'bake'
+}
+
+/** Small overnight bake so every product is on the shelf at open. */
+function seedOvernightDisplay(): FinishedGood[] {
+  return [
+    { productId: 'croissant', quantity: 4 },
+    { productId: 'baguette', quantity: 3 },
+    { productId: 'muffin', quantity: 4 },
+    { productId: 'cookie', quantity: 6 },
+  ]
 }

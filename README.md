@@ -40,9 +40,10 @@ At **1×**, one real second equals one simulation minute.
 The shop uses Kenney CC0 GLB models for furniture, food, and people.  
 See [ASSETS.md](ASSETS.md) for every file, source URL, and license.
 
+People are **1.7 m** tall. Counters are about **0.9 m** high.  
+The outside queue is single file with **0.6 m** spacing on the sidewalk.  
 People walk with `idle` and `walk` clips.  
-Baked goods appear on the display case.  
-The outside queue stands on the sidewalk.
+An overnight bake stocks every product before open. Morning prep bakes the full menu.
 
 ## Architecture
 

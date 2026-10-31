@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { SHOP_DEPTH, SHOP_WIDTH } from '../config/layout'
+import { SHOP_WIDTH } from '../config/layout'
 import { buildShop } from './shop'
 import { CharacterLayer } from './characters'
 import { DisplayGoods } from './displayGoods'
@@ -38,10 +38,10 @@ export class BakeryRenderer {
     this.scene.background = new THREE.Color(0xffe8cc)
     this.scene.fog = new THREE.Fog(0xffe8cc, 14, 30)
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 50)
-    // Pull back to show the sidewalk queue in front of the door
-    this.camera.position.set(5.6, 5.1, -4.2)
-    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.45, SHOP_DEPTH / 2 - 0.4)
+    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50)
+    // Frame the whole 4×3 m shop plus the sidewalk queue (a bit closer than overview)
+    this.camera.position.set(5.4, 4.5, -4.0)
+    this.camera.lookAt(SHOP_WIDTH / 2, 0.55, 0.15)
 
     // Warm cartoon lighting
     this.hemi = new THREE.HemisphereLight(0xffe0b2, 0xc4a574, 0.7)
@@ -114,10 +114,10 @@ export class BakeryRenderer {
       mat.emissiveIntensity = snap.equipment.ovenInUse ? 1.1 : 0.25
     }
 
-    const t = performance.now() * 0.00015
-    this.camera.position.x = 5.6 + Math.sin(t) * 0.12
-    this.camera.position.z = -4.2 + Math.cos(t * 0.8) * 0.08
-    this.camera.lookAt(SHOP_WIDTH / 2 - 0.1, 0.45, SHOP_DEPTH / 2 - 0.4)
+    const t = performance.now() * 0.00012
+    this.camera.position.x = 5.4 + Math.sin(t) * 0.05
+    this.camera.position.z = -4.0 + Math.cos(t * 0.7) * 0.04
+    this.camera.lookAt(SHOP_WIDTH / 2, 0.55, 0.15)
 
     this.renderer.render(this.scene, this.camera)
   }

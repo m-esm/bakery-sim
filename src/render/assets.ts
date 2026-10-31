@@ -36,27 +36,70 @@ export function cloneModel(gltf: GLTF, opts?: { castShadow?: boolean; receiveSha
   return root
 }
 
+/** Local-space AABB from mesh geometry (avoids skinned world AABB inflation). */
+export function measureLocalBounds(object: THREE.Object3D): THREE.Box3 {
+  object.updateMatrixWorld(true)
+  const out = new THREE.Box3()
+  const corner = new THREE.Vector3()
+  let any = false
+  object.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || !obj.geometry) return
+    obj.geometry.computeBoundingBox()
+    const bb = obj.geometry.boundingBox
+    if (!bb) return
+    for (const x of [bb.min.x, bb.max.x]) {
+      for (const y of [bb.min.y, bb.max.y]) {
+        for (const z of [bb.min.z, bb.max.z]) {
+          corner.set(x, y, z).applyMatrix4(obj.matrixWorld)
+          if (!any) {
+            out.min.copy(corner)
+            out.max.copy(corner)
+            any = true
+          } else {
+            out.expandByPoint(corner)
+          }
+        }
+      }
+    }
+  })
+  if (!any) out.setFromObject(object)
+  return out
+}
+
+/**
+ * Measure local Y extent from mesh geometry (bind pose).
+ * Avoids SkinnedMesh world AABB inflation from animations.
+ */
+export function measureLocalHeight(object: THREE.Object3D): number {
+  const box = measureLocalBounds(object)
+  return Math.max(1e-3, box.max.y - box.min.y)
+}
+
 /** Fit model so its height matches `targetHeight` meters. */
 export function fitHeight(object: THREE.Object3D, targetHeight: number): number {
-  const box = new THREE.Box3().setFromObject(object)
-  const size = new THREE.Vector3()
-  box.getSize(size)
-  if (size.y < 1e-4) return 1
-  const scale = targetHeight / size.y
-  object.scale.multiplyScalar(scale)
-  // Sit on the floor
-  const after = new THREE.Box3().setFromObject(object)
-  object.position.y -= after.min.y
+  object.scale.set(1, 1, 1)
+  object.updateMatrixWorld(true)
+  const height = measureLocalHeight(object)
+  const scale = targetHeight / Math.max(height, 1e-3)
+  object.scale.setScalar(scale)
+  seatOnFloor(object)
   return scale
 }
 
 /** Center XZ on origin while keeping floor contact. */
 export function centerOnFloor(object: THREE.Object3D): void {
-  const box = new THREE.Box3().setFromObject(object)
+  object.updateMatrixWorld(true)
+  const box = measureLocalBounds(object)
   const center = new THREE.Vector3()
   box.getCenter(center)
   object.position.x -= center.x
   object.position.z -= center.z
+  seatOnFloor(object)
+}
+
+function seatOnFloor(object: THREE.Object3D): void {
+  object.updateMatrixWorld(true)
+  const box = measureLocalBounds(object)
   object.position.y -= box.min.y
 }
 
