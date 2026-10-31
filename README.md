@@ -4,6 +4,9 @@ Tiny Bakery is a browser 3D bakery simulation.
 The art style is cartoon and low-poly.  
 The shop floor is **12 m²** (4 m × 3 m). One unit equals one meter.
 
+
+> Build note: This public GitHub repository is the build mirror. GitHub Actions builds the container image and pushes it to GHCR.
+
 ## Run the game
 
 1. Install packages: `npm install`
